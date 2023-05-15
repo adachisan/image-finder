@@ -1,0 +1,8 @@
+.vscode/
+bin/
+obj/
+*.env*
+*.txt
+*.log
+config.*
+!README.txt
