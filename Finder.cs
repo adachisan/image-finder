@@ -3,7 +3,6 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
 
-//dotnet add package System.Drawing.Common --version 6.0.0
 //dotnet add package System.Drawing.Common --version 8.0.1
 #pragma warning disable CA1416, CS8601, CS8602, CS8604, CS8618, CS8625
 
@@ -15,8 +14,8 @@ namespace Finder
         public Size Size { get; private set; }
         private bool Disposed { get; set; }
         private int[] Data { get; set; }
-
         private GCHandle Handle { get; set; }
+        public bool Break = false;
 
         private void Setup(Size size)
         {
@@ -73,42 +72,7 @@ namespace Finder
             this.Disposed = true;
         }
 
-        public Rectangle Find(Bmp Target, float Tolerance = 0, Rectangle Area = default, CancellationToken Token = default)
-        {
-            if (Area == default) Area = new Rectangle(0, 0, this.Size.Width, this.Size.Height);
-            int yLimit = Area.Height - Target.Size.Height + 1;
-            int xLimit = Area.Width - Target.Size.Width + 1;
-            if (yLimit * xLimit <= 0) throw new("Area size needs to be bigger than target's size.");
-            var isEqual = (Color a, Color b) =>
-            {
-                if (a.A == 0 || b.A == 0) return true;
-                if (Tolerance <= 0) return a == b;
-                return Math.Abs(a.GetBrightness() - b.GetBrightness()) <= Tolerance;
-            };
-
-            Console.WriteLine($"Finding {Area} in thread {Thread.CurrentThread.ManagedThreadId}");
-
-            for (int y1 = Area.Y; y1 < yLimit + Area.Y; y1++)
-                for (int x1 = Area.X; x1 < xLimit + Area.X; x1++)
-                {
-                    bool found = false;
-                    for (int y2 = 0; y2 < Target.Size.Height; y2 += 4)
-                    {
-                        for (int x2 = 0; x2 < Target.Size.Width; x2 += 4)
-                        {
-                            if (Token.IsCancellationRequested) return Rectangle.Empty;
-                            found = isEqual(this.GetPixel(x1 + x2, y1 + y2), Target.GetPixel(x2, y2));
-                            if (!found) break;
-                        }
-                        if (!found) break;
-                    }
-                    if (found) return new Rectangle(x1, y1, Target.Size.Width, Target.Size.Height);
-                }
-
-            return Rectangle.Empty;
-        }
-
-        public IEnumerable<Rectangle> FindAll(Bmp Target, float Tolerance = 0, Rectangle Area = default)
+        public IEnumerable<Rectangle> Find(Bmp Target, float Tolerance = 0, Rectangle Area = default, Action<(Rectangle rect, int ThreadId)> OnFound = null)
         {
             if (Area == default) Area = new Rectangle(0, 0, this.Size.Width, this.Size.Height);
             int yLimit = Area.Height - Target.Size.Height + 1;
@@ -132,6 +96,7 @@ namespace Finder
                     {
                         for (int x2 = 0; x2 < Target.Size.Width; x2 += 4)
                         {
+                            if (this.Break) yield break;
                             found = isEqual(this.GetPixel(x1 + x2, y1 + y2), Target.GetPixel(x2, y2));
                             if (!found) break;
                         }
@@ -140,7 +105,9 @@ namespace Finder
                     if (found)
                     {
                         skipLine = found;
-                        yield return new Rectangle(x1, y1, Target.Size.Width, Target.Size.Height);
+                        var result = new Rectangle(x1, y1, Target.Size.Width, Target.Size.Height);
+                        OnFound?.Invoke((result, Thread.CurrentThread.ManagedThreadId));
+                        yield return result;
                     }
                 }
             }
@@ -148,47 +115,30 @@ namespace Finder
             yield break;
         }
 
-        public Rectangle Find(Bmp Target, float Tolerance = 0, Rectangle Area = default)
+        public void FindAll(Bmp Target, float Tolerance = 0, Rectangle Area = default, Action<(Rectangle rect, int ThreadId)> OnFound = null)
         {
+            this.Break = false;
+
             if (Area == default) Area = new Rectangle(0, 0, this.Size.Width, this.Size.Height);
             int maxSlices = (Area.Width / Target.Size.Width) * (Area.Height / Target.Size.Height);
             if (maxSlices <= 0) throw new("Area size needs to be bigger than target's size.");
-            using var cts = new CancellationTokenSource();
-            if (maxSlices < 4) return this.Find(Target, Tolerance, Area, cts.Token);
+            if (maxSlices < 4) this.Find(Target, Tolerance, Area, OnFound);
 
             int sliceHeight = Area.Height / 2 + Target.Size.Height / 2;
             int sliceWidth = Area.Width / 2 + Target.Size.Width / 2;
 
-            // IEnumerable<Task<Rectangle>> tasks =
-            // from y in Enumerable.Range(0, 2)
-            // from x in Enumerable.Range(0, 2)
-            // let yOffset = y * (Area.Height / 2 - Target.Size.Height / 2) + Area.Y
-            // let xOffset = x * (Area.Width / 2 - Target.Size.Width / 2) + Area.X
-            // let slice = new Rectangle(xOffset, yOffset, sliceWidth, sliceHeight)
-            // select Task.Run(() => this.Find(Target, Tolerance, slice, cts.Token));
-
-            var tasks = new List<Task<Rectangle>>();
+            var tasks = new List<Task>(4);
             for (int y = 0; y < 2; y++)
+            {
                 for (int x = 0; x < 2; x++)
                 {
                     int yOffset = y * (Area.Height / 2 - Target.Size.Height / 2) + Area.Y;
                     int xOffset = x * (Area.Width / 2 - Target.Size.Width / 2) + Area.X;
                     var slice = new Rectangle(xOffset, yOffset, sliceWidth, sliceHeight);
-                    tasks.Add(Task.Run(() => this.Find(Target, Tolerance, slice, cts.Token)));
+                    tasks.Add(Task.Run(() => this.Find(Target, Tolerance, slice, OnFound).Count()));
                 }
-
-            async Task<Rectangle> fasterTask(List<Task<Rectangle>> tasks, Rectangle never)
-            {
-                if (tasks.Count == 0) return never;
-                var faster = await Task.WhenAny(tasks);
-                if (!tasks.Remove(faster)) return never;
-                if (faster.Result.Equals(never))
-                    return await fasterTask(tasks, never);
-                await cts.CancelAsync();
-                return faster.Result;
-            };
-
-            return fasterTask(tasks.ToList(), Rectangle.Empty).Result;
+            }
+            Task.WhenAll(tasks).Wait();
         }
 
         public void DrawRectangle(Rectangle Rect, Color Color = default, int Thickness = 1)
