@@ -144,9 +144,12 @@ namespace Finder
         public void DrawRectangle(Rectangle Rect, Color Color = default, int Thickness = 1)
         {
             Color = Color == default ? Color.Red : Color;
-            using (var g = Graphics.FromImage(this.Bitmap))
-            using (var pen = new Pen(Color, Thickness))
-                g.DrawRectangle(pen, Rect);
+            lock (this.Bitmap)
+            {
+                using (var g = Graphics.FromImage(this.Bitmap))
+                using (var pen = new Pen(Color, Thickness))
+                    g.DrawRectangle(pen, Rect);
+            }
         }
 
         public void FromScreen()
