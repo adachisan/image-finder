@@ -12,10 +12,10 @@ namespace Finder
     {
         public Bitmap Bitmap { get; private set; }
         public Size Size { get; private set; }
+        private bool Breaked { get; set; }
         private bool Disposed { get; set; }
         private int[] Data { get; set; }
         private GCHandle Handle { get; set; }
-        public bool Break = false;
 
         private void Setup(Size size)
         {
@@ -70,9 +70,12 @@ namespace Finder
             this.Size = Size.Empty;
             this.Data = Array.Empty<int>();
             this.Disposed = true;
+            GC.SuppressFinalize(this);
         }
 
-        public IEnumerable<Rectangle> Find(Bmp Target, float Tolerance = 0, Rectangle Area = default, Action<(Rectangle rect, int ThreadId)> OnFound = null)
+        public void Break() => Breaked = true;
+
+        public IEnumerable<Rectangle> Find(Bmp Target, float Tolerance = 0.2f, Rectangle Area = default, Action<(Rectangle Value, int ThreadId)> OnFound = null)
         {
             if (Area == default) Area = new Rectangle(0, 0, this.Size.Width, this.Size.Height);
             int yLimit = Area.Height - Target.Size.Height + 1;
@@ -96,7 +99,7 @@ namespace Finder
                     {
                         for (int x2 = 0; x2 < Target.Size.Width; x2 += 4)
                         {
-                            if (this.Break) yield break;
+                            if (this.Breaked) yield break;
                             found = isEqual(this.GetPixel(x1 + x2, y1 + y2), Target.GetPixel(x2, y2));
                             if (!found) break;
                         }
@@ -115,9 +118,11 @@ namespace Finder
             yield break;
         }
 
-        public void FindAll(Bmp Target, float Tolerance = 0, Rectangle Area = default, Action<(Rectangle rect, int ThreadId)> OnFound = null)
+        public Task FindAll(Bmp Target, float Tolerance = 0.2f, Rectangle Area = default, Action<(Rectangle Value, int ThreadId)> OnFound = null)
         {
-            this.Break = false;
+            this.Breaked = false;
+
+            //TODO: maxslices from 0 to 4 dynamically
 
             if (Area == default) Area = new Rectangle(0, 0, this.Size.Width, this.Size.Height);
             int maxSlices = (Area.Width / Target.Size.Width) * (Area.Height / Target.Size.Height);
@@ -138,7 +143,8 @@ namespace Finder
                     tasks.Add(Task.Run(() => this.Find(Target, Tolerance, slice, OnFound).Count()));
                 }
             }
-            Task.WhenAll(tasks).Wait();
+
+            return Task.WhenAll(tasks);
         }
 
         public void DrawRectangle(Rectangle Rect, Color Color = default, int Thickness = 1)
@@ -152,7 +158,14 @@ namespace Finder
             }
         }
 
-        public void FromScreen()
+        public static Bmp CreateFromScreen()
+        {
+            var bmp = new Bmp(Screen.Resolution);
+            bmp.CopyFromScreen();
+            return bmp;
+        }
+
+        public void CopyFromScreen()
         {
             using (var g = Graphics.FromImage(this.Bitmap))
                 g.CopyFromScreen(Point.Empty, Point.Empty, Size, CopyPixelOperation.SourceCopy);
@@ -160,44 +173,21 @@ namespace Finder
 
         public override string ToString()
         {
-            using var bmp = new Bitmap(this.Bitmap, new Size(16, 16));
+            using var bmp = new Bmp(new Bitmap(this.Bitmap, new Size(16, 16)));
             var result = new StringBuilder();
             var binary = (int x, int y) => bmp.GetPixel(x, y).GetBrightness() < 0.5f ? 1 : 0;
-            for (int y = 0; y < bmp.Height; y++)
-                for (int x = 0; x < bmp.Width; x++)
+            for (int y = 0; y < bmp.Size.Height; y++)
+            {
+                for (int x = 0; x < bmp.Size.Width; x++)
                     result.Append($"{binary(x, y)}, ");
+                result.AppendLine();
+            }
             return result.ToString().Remove(result.Length - 2, 2);
         }
     }
 
     public struct Screen
     {
-        [DllImport("User32.dll")]
-        private static extern IntPtr GetDC(IntPtr hWnd);
-
-        [DllImport("User32.dll")]
-        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-
-        [DllImport("User32.dll")]
-        private static extern bool SetProcessDPIAware();
-
-        [DllImport("User32.dll")]
-        private static extern bool SetCursorPos(int X, int Y);
-
-        [DllImport("User32.dll")]
-        private static extern bool GetCursorPos(out Point lpPoint);
-
-        [DllImport("gdi32.dll")]
-        private static extern int GetDeviceCaps(IntPtr hDC, dcFlags index);
-        private enum dcFlags { Width = 118, Height = 117 }
-
-        [DllImport("User32.dll")]
-        private static extern void mouse_event(MouseEvent dwFlags, int dx, int dy);
-        private enum MouseEvent { LeftDown = 0x0002, LeftUp = 0x0004, RightDown = 0x0008, RightUp = 0x0010, Move = 0x0001, Absolute = 0x8000 }
-
-        [DllImport("User32.dll")]
-        private static extern void keybd_event(ConsoleKey bVk, byte bScan, KeyEvent dwFlags);
-        private enum KeyEvent { Down = 0, Up = 2 }
 
         public static Size Resolution { get; private set; }
 
@@ -212,6 +202,7 @@ namespace Finder
             SetProcessDPIAware();
             UpdateResolution();
         }
+
 
         public static void Press(ConsoleKey Key)
         {
@@ -250,6 +241,33 @@ namespace Finder
             Resolution = new Size(width, height);
             ReleaseDC(IntPtr.Zero, hdc);
         }
+
+        [DllImport("User32.dll")]
+        private static extern IntPtr GetDC(IntPtr hWnd);
+
+        [DllImport("User32.dll")]
+        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        [DllImport("User32.dll")]
+        private static extern bool SetProcessDPIAware();
+
+        [DllImport("User32.dll")]
+        private static extern bool SetCursorPos(int X, int Y);
+
+        [DllImport("User32.dll")]
+        private static extern bool GetCursorPos(out Point lpPoint);
+
+        [DllImport("gdi32.dll")]
+        private static extern int GetDeviceCaps(IntPtr hDC, dcFlags index);
+        private enum dcFlags { Width = 118, Height = 117 }
+
+        [DllImport("User32.dll")]
+        private static extern void mouse_event(MouseEvent dwFlags, int dx, int dy);
+        private enum MouseEvent { LeftDown = 0x0002, LeftUp = 0x0004, RightDown = 0x0008, RightUp = 0x0010, Move = 0x0001, Absolute = 0x8000 }
+
+        [DllImport("User32.dll")]
+        private static extern void keybd_event(ConsoleKey bVk, byte bScan, KeyEvent dwFlags);
+        private enum KeyEvent { Down = 0, Up = 2 }
     }
 
 }
