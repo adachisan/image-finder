@@ -87,28 +87,24 @@ namespace Finder
                 if (Tolerance <= 0) return a == b;
                 return Math.Abs(a.GetBrightness() - b.GetBrightness()) <= Tolerance;
             };
-
-            bool skipLine, found;
-            for (int y1 = Area.Y; y1 < yLimit + Area.Y; y1 += skipLine ? Target.Size.Height : 1)
+            var isMatching = (int xOffset, int yOffset) =>
             {
-                skipLine = false;
-                for (int x1 = Area.X; x1 < xLimit + Area.X; x1 += found ? Target.Size.Width : 1)
+                for (int y = 0; y < Target.Size.Height; y += 4)
+                    for (int x = 0; x < Target.Size.Width; x += 4)
+                        if (!isEqual(this.GetPixel(xOffset + x, yOffset + y), Target.GetPixel(x, y)))
+                            return false;
+                return true;
+            };
+
+            for (int y = Area.Y, skipY = 0; y < yLimit + Area.Y; y += skipY > 0 ? Target.Size.Height : 1, skipY = 0)
+            {
+                for (int x = Area.X, skipX = 0; x < xLimit + Area.X; x += skipX > 0 ? Target.Size.Width : 1, skipX = 0)
                 {
-                    found = false;
-                    for (int y2 = 0; y2 < Target.Size.Height; y2 += 4)
+                    if (this.Breaked) yield break;
+                    if (isMatching(x, y))
                     {
-                        for (int x2 = 0; x2 < Target.Size.Width; x2 += 4)
-                        {
-                            if (this.Breaked) yield break;
-                            found = isEqual(this.GetPixel(x1 + x2, y1 + y2), Target.GetPixel(x2, y2));
-                            if (!found) break;
-                        }
-                        if (!found) break;
-                    }
-                    if (found)
-                    {
-                        skipLine = found;
-                        var result = new Rectangle(x1, y1, Target.Size.Width, Target.Size.Height);
+                        skipY = 1; skipX = 1;
+                        var result = new Rectangle(x, y, Target.Size.Width, Target.Size.Height);
                         OnFound?.Invoke((result, Thread.CurrentThread.ManagedThreadId));
                         yield return result;
                     }
@@ -122,20 +118,21 @@ namespace Finder
         {
             this.Breaked = false;
 
-            //TODO: maxslices from 0 to 4 dynamically
-
             if (Area == default) Area = new Rectangle(0, 0, this.Size.Width, this.Size.Height);
-            int maxSlices = (Area.Width / Target.Size.Width) * (Area.Height / Target.Size.Height);
-            if (maxSlices <= 0) throw new("Area size needs to be bigger than target's size.");
-            if (maxSlices < 4) this.Find(Target, Tolerance, Area, OnFound);
+            int xSlices = Math.Min(2, Area.Width / Target.Size.Width);
+            int ySlices = Math.Min(2, Area.Height / Target.Size.Height);
+            if (xSlices * ySlices <= 0) throw new("Area size needs to be bigger than target's size.");
+            if (xSlices < 2 || ySlices < 2) this.Find(Target, Tolerance, Area, OnFound);
+            //TODO: dynamically find 1 to 2 x and y slices
+            // Console.WriteLine($"{xSlices}, {ySlices}");
 
             int sliceHeight = Area.Height / 2 + Target.Size.Height / 2;
             int sliceWidth = Area.Width / 2 + Target.Size.Width / 2;
 
             var tasks = new List<Task>(4);
-            for (int y = 0; y < 2; y++)
+            for (int y = 0; y < ySlices; y++)
             {
-                for (int x = 0; x < 2; x++)
+                for (int x = 0; x < xSlices; x++)
                 {
                     int yOffset = y * (Area.Height / 2 - Target.Size.Height / 2) + Area.Y;
                     int xOffset = x * (Area.Width / 2 - Target.Size.Width / 2) + Area.X;
