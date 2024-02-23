@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 
 //dotnet add package System.Drawing.Common --version 8.0.1
-#pragma warning disable CA1416, CS8601, CS8602, CS8604, CS8618, CS8625
+#pragma warning disable CA1416, CS8604, CS8618
 
 namespace Finder
 {
@@ -33,16 +33,16 @@ namespace Finder
         public Bmp(Bitmap bitmap)
         {
             this.Setup(new Size(bitmap.Width, bitmap.Height));
-            using (var g = Graphics.FromImage(this.Bitmap))
-                g.DrawImage(bitmap, new Rectangle(Point.Empty, this.Size));
+            using var g = Graphics.FromImage(this.Bitmap);
+            g.DrawImage(bitmap, new Rectangle(Point.Empty, this.Size));
         }
 
         public Bmp(string FileName)
         {
             using var bmp = new Bitmap(FileName);
             this.Setup(new Size(bmp.Width, bmp.Height));
-            using (var g = Graphics.FromImage(this.Bitmap))
-                g.DrawImage(bmp, new Rectangle(Point.Empty, this.Size));
+            using var g = Graphics.FromImage(this.Bitmap);
+            g.DrawImage(bmp, new Rectangle(Point.Empty, this.Size));
         }
 
         ~Bmp()
@@ -75,26 +75,26 @@ namespace Finder
 
         public void Break() => Breaked = true;
 
-        public IEnumerable<Rectangle> Find(Bmp Target, float Tolerance = 0.2f, Rectangle Area = default, Action<(Rectangle Value, int ThreadId)> OnFound = null)
+        public IEnumerable<Rectangle> Find(Bmp Target, float Tolerance = 0.2f, Rectangle Area = default, Action<Rectangle>? OnFound = null)
         {
             if (Area == default) Area = new Rectangle(0, 0, this.Size.Width, this.Size.Height);
             int yLimit = Area.Height - Target.Size.Height + 1;
             int xLimit = Area.Width - Target.Size.Width + 1;
             if (yLimit * xLimit <= 0) throw new("Area size needs to be bigger than target's size.");
-            var isEqual = (Color a, Color b) =>
+            bool isEqual(Color a, Color b)
             {
                 if (a.A == 0 || b.A == 0) return true;
                 if (Tolerance <= 0) return a == b;
                 return Math.Abs(a.GetBrightness() - b.GetBrightness()) <= Tolerance;
-            };
-            var isMatching = (int xOffset, int yOffset) =>
+            }
+            bool isMatching(int xOffset, int yOffset)
             {
                 for (int y = 0; y < Target.Size.Height; y += 4)
                     for (int x = 0; x < Target.Size.Width; x += 4)
                         if (!isEqual(this.GetPixel(xOffset + x, yOffset + y), Target.GetPixel(x, y)))
                             return false;
                 return true;
-            };
+            }
 
             for (int y = Area.Y, skipY = 0; y < yLimit + Area.Y; y += skipY > 0 ? Target.Size.Height : 1, skipY = 0)
             {
@@ -105,7 +105,7 @@ namespace Finder
                     {
                         skipY = 1; skipX = 1;
                         var result = new Rectangle(x, y, Target.Size.Width, Target.Size.Height);
-                        OnFound?.Invoke((result, Thread.CurrentThread.ManagedThreadId));
+                        OnFound?.Invoke(result);
                         yield return result;
                     }
                 }
@@ -114,7 +114,7 @@ namespace Finder
             yield break;
         }
 
-        public Task FindAll(Bmp Target, float Tolerance = 0.2f, Rectangle Area = default, Action<(Rectangle Value, int ThreadId)> OnFound = null)
+        public Task FindAll(Bmp Target, float Tolerance = 0.2f, Rectangle Area = default, Action<Rectangle>? OnFound = null)
         {
             this.Breaked = false;
 
@@ -149,9 +149,9 @@ namespace Finder
             Color = Color == default ? Color.Red : Color;
             lock (this.Bitmap)
             {
-                using (var g = Graphics.FromImage(this.Bitmap))
-                using (var pen = new Pen(Color, Thickness))
-                    g.DrawRectangle(pen, Rect);
+                using var g = Graphics.FromImage(this.Bitmap);
+                using var pen = new Pen(Color, Thickness);
+                g.DrawRectangle(pen, Rect);
             }
         }
 
@@ -164,15 +164,15 @@ namespace Finder
 
         public void CopyFromScreen()
         {
-            using (var g = Graphics.FromImage(this.Bitmap))
-                g.CopyFromScreen(Point.Empty, Point.Empty, Size, CopyPixelOperation.SourceCopy);
+            using var g = Graphics.FromImage(this.Bitmap);
+            g.CopyFromScreen(Point.Empty, Point.Empty, Size, CopyPixelOperation.SourceCopy);
         }
 
         public override string ToString()
         {
             using var bmp = new Bmp(new Bitmap(this.Bitmap, new Size(16, 16)));
             var result = new StringBuilder();
-            var binary = (int x, int y) => bmp.GetPixel(x, y).GetBrightness() < 0.5f ? 1 : 0;
+            int binary(int x, int y) => bmp.GetPixel(x, y).GetBrightness() < 0.5f ? 1 : 0;
             for (int y = 0; y < bmp.Size.Height; y++)
             {
                 for (int x = 0; x < bmp.Size.Width; x++)
@@ -225,9 +225,9 @@ namespace Finder
         public static void DrawRectangle(Rectangle Rect, Color color = default, int thickness = 1)
         {
             color = color == default ? Color.Red : color;
-            using (var g = Graphics.FromHwnd(IntPtr.Zero))
-            using (var pen = new Pen(color, thickness))
-                g.DrawRectangle(pen, Rect);
+            using var g = Graphics.FromHwnd(IntPtr.Zero);
+            using var pen = new Pen(color, thickness);
+            g.DrawRectangle(pen, Rect);
         }
 
         private static void UpdateResolution()
