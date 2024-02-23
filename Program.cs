@@ -12,8 +12,8 @@ timeByStep.Restart();
 
 img_a.FindAll(img_b, 0.4f, default, (x) =>
 {
-    img_a.DrawRectangle(x.Value);
-    Console.WriteLine($"thread {x.ThreadId} = {x.Value}: {timeByStep.ElapsedMilliseconds}ms");
+    img_a.DrawRectangle(x);
+    Console.WriteLine($"{x}: {timeByStep.ElapsedMilliseconds}ms");
     timeByStep.Restart();
 }).Wait();
 
