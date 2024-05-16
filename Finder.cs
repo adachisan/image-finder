@@ -12,7 +12,6 @@ namespace Finder
     {
         public Bitmap Bitmap { get; private set; }
         public Size Size { get; private set; }
-        private bool Breaked { get; set; }
         private bool Disposed { get; set; }
         private int[] Data { get; set; }
         private GCHandle Handle { get; set; }
@@ -73,9 +72,7 @@ namespace Finder
             GC.SuppressFinalize(this);
         }
 
-        public void Break() => Breaked = true;
-
-        public IEnumerable<Rectangle> Find(Bmp Target, float Tolerance = 0.2f, Rectangle Area = default, Action<Rectangle>? OnFound = null)
+        public IEnumerable<Rectangle> Find(Bmp Target, float Tolerance = 0.2f, Rectangle Area = default)
         {
             if (Area == default) Area = new Rectangle(0, 0, this.Size.Width, this.Size.Height);
             int yLimit = Area.Height - Target.Size.Height + 1;
@@ -97,51 +94,41 @@ namespace Finder
             }
 
             for (int y = Area.Y, skipY = 0; y < yLimit + Area.Y; y += skipY > 0 ? Target.Size.Height : 1, skipY = 0)
-            {
                 for (int x = Area.X, skipX = 0; x < xLimit + Area.X; x += skipX > 0 ? Target.Size.Width : 1, skipX = 0)
-                {
-                    if (this.Breaked) yield break;
                     if (isMatching(x, y))
                     {
                         skipY = 1; skipX = 1;
-                        var result = new Rectangle(x, y, Target.Size.Width, Target.Size.Height);
-                        OnFound?.Invoke(result);
+                        Rectangle result = new (x, y, Target.Size.Width, Target.Size.Height);
                         yield return result;
                     }
-                }
-            }
-
-            yield break;
         }
 
-        public Task FindAll(Bmp Target, float Tolerance = 0.2f, Rectangle Area = default, Action<Rectangle>? OnFound = null)
+        public Rectangle[] FindAll(Bmp Target, float Tolerance = 0.2f, Rectangle Area = default)
         {
-            this.Breaked = false;
-
             if (Area == default) Area = new Rectangle(0, 0, this.Size.Width, this.Size.Height);
             int xSlices = Math.Min(2, Area.Width / Target.Size.Width);
             int ySlices = Math.Min(2, Area.Height / Target.Size.Height);
             if (xSlices * ySlices <= 0) throw new("Area size needs to be bigger than target's size.");
-            if (xSlices < 2 || ySlices < 2) this.Find(Target, Tolerance, Area, OnFound);
+            if (xSlices < 2 || ySlices < 2) return this.Find(Target, Tolerance, Area).ToArray();
             //TODO: dynamically find 1 to 2 x and y slices
             // Console.WriteLine($"{xSlices}, {ySlices}");
 
             int sliceHeight = Area.Height / 2 + Target.Size.Height / 2;
             int sliceWidth = Area.Width / 2 + Target.Size.Width / 2;
+            List<Task<Rectangle[]>> tasks = new(4);
 
-            var tasks = new List<Task>(4);
             for (int y = 0; y < ySlices; y++)
             {
                 for (int x = 0; x < xSlices; x++)
                 {
                     int yOffset = y * (Area.Height / 2 - Target.Size.Height / 2) + Area.Y;
                     int xOffset = x * (Area.Width / 2 - Target.Size.Width / 2) + Area.X;
-                    var slice = new Rectangle(xOffset, yOffset, sliceWidth, sliceHeight);
-                    tasks.Add(Task.Run(() => this.Find(Target, Tolerance, slice, OnFound).Count()));
+                    Rectangle slice = new (xOffset, yOffset, sliceWidth, sliceHeight);
+                    tasks.Add(Task.Run(() => this.Find(Target, Tolerance, slice).ToArray()));
                 }
             }
 
-            return Task.WhenAll(tasks);
+            return Task.WhenAll(tasks).Result.SelectMany(x => x).ToArray();
         }
 
         public void DrawRectangle(Rectangle Rect, Color Color = default, int Thickness = 1)
@@ -233,8 +220,8 @@ namespace Finder
         private static void UpdateResolution()
         {
             IntPtr hdc = GetDC(IntPtr.Zero);
-            int width = GetDeviceCaps(hdc, dcFlags.Width);
-            int height = GetDeviceCaps(hdc, dcFlags.Height);
+            int width = GetDeviceCaps(hdc, DcFlags.Width);
+            int height = GetDeviceCaps(hdc, DcFlags.Height);
             Resolution = new Size(width, height);
             ReleaseDC(IntPtr.Zero, hdc);
         }
@@ -255,8 +242,8 @@ namespace Finder
         private static extern bool GetCursorPos(out Point lpPoint);
 
         [DllImport("gdi32.dll")]
-        private static extern int GetDeviceCaps(IntPtr hDC, dcFlags index);
-        private enum dcFlags { Width = 118, Height = 117 }
+        private static extern int GetDeviceCaps(IntPtr hDC, DcFlags index);
+        private enum DcFlags { Width = 118, Height = 117 }
 
         [DllImport("User32.dll")]
         private static extern void mouse_event(MouseEvent dwFlags, int dx, int dy);
